@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,6 +15,7 @@
  */
 package com.netflix.hystrix;
 
+import com.hystrix.junit.HystrixRequestContextRule;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
@@ -30,18 +31,22 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.netflix.hystrix.collapser.CollapserTimer;
 import com.netflix.hystrix.collapser.RealCollapserTimer;
 import com.netflix.hystrix.strategy.concurrency.HystrixContextRunnable;
+import com.netflix.hystrix.strategy.concurrency.HystrixContextScheduler;
 import com.netflix.hystrix.strategy.properties.HystrixPropertiesCollapserDefault;
-import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 import rx.Observable;
 import rx.Observable.OnSubscribe;
 import rx.Subscriber;
+import rx.Subscription;
+import rx.functions.Action0;
 import rx.functions.Action1;
 import rx.functions.Func1;
 import rx.observers.TestSubscriber;
@@ -122,24 +127,14 @@ public class HystrixObservableCollapserTest {
         }
     };
 
+    @Rule
+    public HystrixRequestContextRule ctx = new HystrixRequestContextRule();
     private static ExecutorService threadPool = new ThreadPoolExecutor(100, 100, 10, TimeUnit.MINUTES, new SynchronousQueue<Runnable>());
 
     @Before
     public void init() {
         // since we're going to modify properties of the same class between tests, wipe the cache each time
         HystrixCollapser.reset();
-        Hystrix.reset();
-        /* we must call this to simulate a new request lifecycle running and clearing caches */
-        HystrixRequestContext.initializeContext();
-    }
-
-    @After
-    public void cleanup() {
-        // instead of storing the reference from initialize we'll just get the current state and shutdown
-        if (HystrixRequestContext.getContextForCurrentThread() != null) {
-            // it may be null if a test shuts the context down manually
-            HystrixRequestContext.getContextForCurrentThread().shutdown();
-        }
     }
 
     @Test
@@ -165,7 +160,7 @@ public class HystrixObservableCollapserTest {
         for(int i = 0; i < 10; i++) {
             init();
             testTwoRequests();
-            cleanup();
+            ctx.reset();
         }
     }
 
@@ -661,6 +656,901 @@ public class HystrixObservableCollapserTest {
         }
     }
 
+    @Test
+    public void testEarlyUnsubscribeExecutedViaToObservable() throws Exception {
+        TestCollapserTimer timer = new TestCollapserTimer();
+        HystrixObservableCollapser<String, String, String, String> collapser1 = new TestRequestCollapser(timer, 1);
+        Observable<String> response1 = collapser1.toObservable();
+        HystrixObservableCollapser<String, String, String, String> collapser2 = new TestRequestCollapser(timer, 2);
+        Observable<String> response2 = collapser2.toObservable();
+
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        final CountDownLatch latch2 = new CountDownLatch(1);
+
+        final AtomicReference<String> value1 = new AtomicReference<String>(null);
+        final AtomicReference<String> value2 = new AtomicReference<String>(null);
+
+        Subscription s1 = response1
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s1 Unsubscribed!");
+                        latch1.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnCompleted");
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnError : " + e);
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnNext : " + s);
+                        value1.set(s);
+                    }
+                });
+
+        Subscription s2 = response2
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s2 Unsubscribed!");
+                        latch2.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnCompleted");
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnError : " + e);
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnNext : " + s);
+                        value2.set(s);
+                    }
+                });
+
+        s1.unsubscribe();
+
+        timer.incrementTime(10); // let time pass that equals the default delay/period
+
+        assertTrue(latch1.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(latch2.await(1000, TimeUnit.MILLISECONDS));
+
+        assertNull(value1.get());
+        assertEquals("2", value2.get());
+
+        System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
+        assertEquals(1, HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().size());
+
+        HystrixCollapserMetrics metrics = collapser1.getMetrics();
+        assertSame(metrics, collapser2.getMetrics());
+
+        HystrixInvokableInfo<?> command = HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().iterator().next();
+        assertEquals(1, command.getNumberCollapsed()); //1 should have been removed from batch
+    }
+
+    @Test
+    public void testEarlyUnsubscribeExecutedViaObserve() throws Exception {
+        TestCollapserTimer timer = new TestCollapserTimer();
+        HystrixObservableCollapser<String, String, String, String> collapser1 = new TestRequestCollapser(timer, 1);
+        Observable<String> response1 = collapser1.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser2 = new TestRequestCollapser(timer, 2);
+        Observable<String> response2 = collapser2.observe();
+
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        final CountDownLatch latch2 = new CountDownLatch(1);
+
+        final AtomicReference<String> value1 = new AtomicReference<String>(null);
+        final AtomicReference<String> value2 = new AtomicReference<String>(null);
+
+        Subscription s1 = response1
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s1 Unsubscribed!");
+                        latch1.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnCompleted");
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnError : " + e);
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnNext : " + s);
+                        value1.set(s);
+                    }
+                });
+
+        Subscription s2 = response2
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s2 Unsubscribed!");
+                        latch2.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnCompleted");
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnError : " + e);
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnNext : " + s);
+                        value2.set(s);
+                    }
+                });
+
+        s1.unsubscribe();
+
+        timer.incrementTime(10); // let time pass that equals the default delay/period
+
+        assertTrue(latch1.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(latch2.await(1000, TimeUnit.MILLISECONDS));
+
+        assertNull(value1.get());
+        assertEquals("2", value2.get());
+
+        System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
+        assertEquals(1, HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().size());
+
+        HystrixCollapserMetrics metrics = collapser1.getMetrics();
+        assertSame(metrics, collapser2.getMetrics());
+
+        HystrixInvokableInfo<?> command = HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().iterator().next();
+        assertEquals(1, command.getNumberCollapsed()); //1 should have been removed from batch
+    }
+
+    @Test
+    public void testEarlyUnsubscribeFromAllCancelsBatch() throws Exception {
+        TestCollapserTimer timer = new TestCollapserTimer();
+        HystrixObservableCollapser<String, String, String, String> collapser1 = new TestRequestCollapser(timer, 1);
+        Observable<String> response1 = collapser1.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser2 = new TestRequestCollapser(timer, 2);
+        Observable<String> response2 = collapser2.observe();
+
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        final CountDownLatch latch2 = new CountDownLatch(1);
+
+        final AtomicReference<String> value1 = new AtomicReference<String>(null);
+        final AtomicReference<String> value2 = new AtomicReference<String>(null);
+
+        Subscription s1 = response1
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s1 Unsubscribed!");
+                        latch1.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnCompleted");
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnError : " + e);
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnNext : " + s);
+                        value1.set(s);
+                    }
+                });
+
+        Subscription s2 = response2
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s2 Unsubscribed!");
+                        latch2.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnCompleted");
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnError : " + e);
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnNext : " + s);
+                        value2.set(s);
+                    }
+                });
+
+        s1.unsubscribe();
+        s2.unsubscribe();
+
+        timer.incrementTime(10); // let time pass that equals the default delay/period
+
+        assertTrue(latch1.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(latch2.await(1000, TimeUnit.MILLISECONDS));
+
+        assertNull(value1.get());
+        assertNull(value2.get());
+
+        System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
+        assertEquals(0, HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().size());
+    }
+
+    @Test
+    public void testRequestThenCacheHitAndCacheHitUnsubscribed() throws Exception {
+        TestCollapserTimer timer = new TestCollapserTimer();
+        HystrixObservableCollapser<String, String, String, String> collapser1 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response1 = collapser1.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser2 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response2 = collapser2.observe();
+
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        final CountDownLatch latch2 = new CountDownLatch(1);
+
+        final AtomicReference<String> value1 = new AtomicReference<String>(null);
+        final AtomicReference<String> value2 = new AtomicReference<String>(null);
+
+        Subscription s1 = response1
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s1 Unsubscribed!");
+                        latch1.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnCompleted");
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnError : " + e);
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnNext : " + s);
+                        value1.set(s);
+                    }
+                });
+
+        Subscription s2 = response2
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s2 Unsubscribed!");
+                        latch2.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnCompleted");
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnError : " + e);
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnNext : " + s);
+                        value2.set(s);
+                    }
+                });
+
+        s2.unsubscribe();
+
+        timer.incrementTime(10); // let time pass that equals the default delay/period
+
+        assertTrue(latch1.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(latch2.await(1000, TimeUnit.MILLISECONDS));
+
+        assertEquals("foo", value1.get());
+        assertNull(value2.get());
+
+        System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
+        assertEquals(1, HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().size());
+
+        HystrixInvokableInfo<?> command = HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().iterator().next();
+        assertCommandExecutionEvents(command, HystrixEventType.EMIT, HystrixEventType.SUCCESS, HystrixEventType.COLLAPSED);
+        assertEquals(1, command.getNumberCollapsed()); //should only be 1 collapsed - other came from cache, then was cancelled
+    }
+
+    @Test
+    public void testRequestThenCacheHitAndOriginalUnsubscribed() throws Exception {
+        TestCollapserTimer timer = new TestCollapserTimer();
+        HystrixObservableCollapser<String, String, String, String> collapser1 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response1 = collapser1.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser2 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response2 = collapser2.observe();
+
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        final CountDownLatch latch2 = new CountDownLatch(1);
+
+        final AtomicReference<String> value1 = new AtomicReference<String>(null);
+        final AtomicReference<String> value2 = new AtomicReference<String>(null);
+
+        Subscription s1 = response1
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s1 Unsubscribed!");
+                        latch1.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnCompleted");
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnError : " + e);
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnNext : " + s);
+                        value1.set(s);
+                    }
+                });
+
+        Subscription s2 = response2
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s2 Unsubscribed!");
+                        latch2.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnCompleted");
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnError : " + e);
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnNext : " + s);
+                        value2.set(s);
+                    }
+                });
+
+        s1.unsubscribe();
+
+        timer.incrementTime(10); // let time pass that equals the default delay/period
+
+        assertTrue(latch1.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(latch2.await(1000, TimeUnit.MILLISECONDS));
+
+        assertNull(value1.get());
+        assertEquals("foo", value2.get());
+
+        System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
+        assertEquals(1, HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().size());
+
+        HystrixInvokableInfo<?> command = HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().iterator().next();
+        assertCommandExecutionEvents(command, HystrixEventType.EMIT, HystrixEventType.SUCCESS, HystrixEventType.COLLAPSED);
+        assertEquals(1, command.getNumberCollapsed()); //should only be 1 collapsed - other came from cache, then was cancelled
+    }
+
+    @Test
+    public void testRequestThenTwoCacheHitsOriginalAndOneCacheHitUnsubscribed() throws Exception {
+        TestCollapserTimer timer = new TestCollapserTimer();
+        HystrixObservableCollapser<String, String, String, String> collapser1 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response1 = collapser1.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser2 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response2 = collapser2.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser3 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response3 = collapser3.observe();
+
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        final CountDownLatch latch2 = new CountDownLatch(1);
+        final CountDownLatch latch3 = new CountDownLatch(1);
+
+
+        final AtomicReference<String> value1 = new AtomicReference<String>(null);
+        final AtomicReference<String> value2 = new AtomicReference<String>(null);
+        final AtomicReference<String> value3 = new AtomicReference<String>(null);
+
+
+        Subscription s1 = response1
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s1 Unsubscribed!");
+                        latch1.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnCompleted");
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnError : " + e);
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnNext : " + s);
+                        value1.set(s);
+                    }
+                });
+
+        Subscription s2 = response2
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s2 Unsubscribed!");
+                        latch2.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnCompleted");
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnError : " + e);
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnNext : " + s);
+                        value2.set(s);
+                    }
+                });
+
+        Subscription s3 = response3
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s3 Unsubscribed!");
+                        latch3.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s3 OnCompleted");
+                        latch3.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s3 OnError : " + e);
+                        latch3.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s3 OnNext : " + s);
+                        value3.set(s);
+                    }
+                });
+
+        s1.unsubscribe();
+        s3.unsubscribe();
+
+        timer.incrementTime(10); // let time pass that equals the default delay/period
+
+        assertTrue(latch1.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(latch2.await(1000, TimeUnit.MILLISECONDS));
+
+        assertNull(value1.get());
+        assertEquals("foo", value2.get());
+        assertNull(value3.get());
+
+
+        System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
+        assertEquals(1, HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().size());
+
+        HystrixInvokableInfo<?> command = HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().iterator().next();
+        assertCommandExecutionEvents(command, HystrixEventType.EMIT, HystrixEventType.SUCCESS, HystrixEventType.COLLAPSED);
+        assertEquals(1, command.getNumberCollapsed()); //should only be 1 collapsed - other came from cache, then was cancelled
+    }
+
+    @Test
+    public void testRequestThenTwoCacheHitsAllUnsubscribed() throws Exception {
+        TestCollapserTimer timer = new TestCollapserTimer();
+        HystrixObservableCollapser<String, String, String, String> collapser1 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response1 = collapser1.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser2 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response2 = collapser2.observe();
+        HystrixObservableCollapser<String, String, String, String> collapser3 = new SuccessfulCacheableCollapsedCommand(timer, "foo", true);
+        Observable<String> response3 = collapser3.observe();
+
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        final CountDownLatch latch2 = new CountDownLatch(1);
+        final CountDownLatch latch3 = new CountDownLatch(1);
+
+
+        final AtomicReference<String> value1 = new AtomicReference<String>(null);
+        final AtomicReference<String> value2 = new AtomicReference<String>(null);
+        final AtomicReference<String> value3 = new AtomicReference<String>(null);
+
+
+        Subscription s1 = response1
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s1 Unsubscribed!");
+                        latch1.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnCompleted");
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnError : " + e);
+                        latch1.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s1 OnNext : " + s);
+                        value1.set(s);
+                    }
+                });
+
+        Subscription s2 = response2
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s2 Unsubscribed!");
+                        latch2.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnCompleted");
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnError : " + e);
+                        latch2.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s2 OnNext : " + s);
+                        value2.set(s);
+                    }
+                });
+
+        Subscription s3 = response3
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : s3 Unsubscribed!");
+                        latch3.countDown();
+                    }
+                })
+                .subscribe(new Subscriber<String>() {
+                    @Override
+                    public void onCompleted() {
+                        System.out.println(System.currentTimeMillis() + " : s3 OnCompleted");
+                        latch3.countDown();
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        System.out.println(System.currentTimeMillis() + " : s3 OnError : " + e);
+                        latch3.countDown();
+                    }
+
+                    @Override
+                    public void onNext(String s) {
+                        System.out.println(System.currentTimeMillis() + " : s3 OnNext : " + s);
+                        value3.set(s);
+                    }
+                });
+
+        s1.unsubscribe();
+        s2.unsubscribe();
+        s3.unsubscribe();
+
+        timer.incrementTime(10); // let time pass that equals the default delay/period
+
+        assertTrue(latch1.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(latch2.await(1000, TimeUnit.MILLISECONDS));
+
+        assertNull(value1.get());
+        assertNull(value2.get());
+        assertNull(value3.get());
+
+
+        System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
+        assertEquals(0, HystrixRequestLog.getCurrentRequest().getAllExecutedCommands().size());
+    }
+
+    class Pair<A, B> {
+        final A a;
+        final B b;
+
+        Pair(A a, B b) {
+            this.a = a;
+            this.b = b;
+        }
+    }
+
+    class MyCommand extends HystrixObservableCommand<Pair<String, Integer>> {
+
+        private final List<String> args;
+
+        public MyCommand(List<String> args) {
+            super(HystrixObservableCommand.Setter.withGroupKey(HystrixCommandGroupKey.Factory.asKey("BATCH")));
+            this.args = args;
+        }
+
+        @Override
+        protected Observable<Pair<String, Integer>> construct() {
+            return Observable.from(args).map(new Func1<String, Pair<String, Integer>>() {
+                @Override
+                public Pair<String, Integer> call(String s) {
+                    return new Pair<String, Integer>(s, Integer.parseInt(s));
+                }
+            });
+        }
+    }
+
+    class MyCollapser extends HystrixObservableCollapser<String, Pair<String, Integer>, Integer, String> {
+
+        private final String arg;
+
+        public MyCollapser(String arg, boolean requestCachingOn) {
+            super(HystrixCollapserKey.Factory.asKey("UNITTEST"),
+                    HystrixObservableCollapser.Scope.REQUEST,
+                    new RealCollapserTimer(),
+                    HystrixCollapserProperties.Setter().withRequestCacheEnabled(requestCachingOn),
+                    HystrixCollapserMetrics.getInstance(HystrixCollapserKey.Factory.asKey("UNITTEST"),
+                            new HystrixPropertiesCollapserDefault(HystrixCollapserKey.Factory.asKey("UNITTEST"),
+                                    HystrixCollapserProperties.Setter())));
+            this.arg = arg;
+        }
+
+
+        @Override
+        public String getRequestArgument() {
+            return arg;
+        }
+
+        @Override
+        protected HystrixObservableCommand<Pair<String, Integer>> createCommand(Collection<CollapsedRequest<Integer, String>> collapsedRequests) {
+            List<String> args = new ArrayList<String>();
+            for (CollapsedRequest<Integer, String> req: collapsedRequests) {
+                args.add(req.getArgument());
+            }
+
+            return new MyCommand(args);
+        }
+
+        @Override
+        protected Func1<Pair<String, Integer>, String> getBatchReturnTypeKeySelector() {
+            return new Func1<Pair<String, Integer>, String>() {
+                @Override
+                public String call(Pair<String, Integer> pair) {
+                    return pair.a;
+                }
+            };
+        }
+
+        @Override
+        protected Func1<String, String> getRequestArgumentKeySelector() {
+            return new Func1<String, String>() {
+                @Override
+                public String call(String s) {
+                    return s;
+                }
+            };
+        }
+
+        @Override
+        protected void onMissingResponse(CollapsedRequest<Integer, String> r) {
+            r.setException(new RuntimeException("missing"));
+        }
+
+        @Override
+        protected Func1<Pair<String, Integer>, Integer> getBatchReturnTypeToResponseTypeMapper() {
+            return new Func1<Pair<String, Integer>, Integer>() {
+                @Override
+                public Integer call(Pair<String, Integer> pair) {
+                    return pair.b;
+                }
+            };
+        }
+    }
+
+    @Test
+    public void testDuplicateArgumentsWithRequestCachingOn() throws Exception {
+        final int NUM = 10;
+
+        List<Observable<Integer>> observables = new ArrayList<Observable<Integer>>();
+        for (int i = 0; i < NUM; i++) {
+            MyCollapser c = new MyCollapser("5", true);
+            observables.add(c.toObservable());
+        }
+
+        List<TestSubscriber<Integer>> subscribers = new ArrayList<TestSubscriber<Integer>>();
+        for (final Observable<Integer> o: observables) {
+            final TestSubscriber<Integer> sub = new TestSubscriber<Integer>();
+            subscribers.add(sub);
+
+            o.subscribe(sub);
+        }
+
+        Thread.sleep(100);
+
+        //all subscribers should receive the same value
+        for (TestSubscriber<Integer> sub: subscribers) {
+            sub.awaitTerminalEvent(1000, TimeUnit.MILLISECONDS);
+            System.out.println("Subscriber received : " + sub.getOnNextEvents());
+            sub.assertCompleted();
+            sub.assertNoErrors();
+            sub.assertValues(5);
+        }
+    }
+
+    @Test
+    public void testDuplicateArgumentsWithRequestCachingOff() throws Exception {
+        final int NUM = 10;
+
+        List<Observable<Integer>> observables = new ArrayList<Observable<Integer>>();
+        for (int i = 0; i < NUM; i++) {
+            MyCollapser c = new MyCollapser("5", false);
+            observables.add(c.toObservable());
+        }
+
+        List<TestSubscriber<Integer>> subscribers = new ArrayList<TestSubscriber<Integer>>();
+        for (final Observable<Integer> o: observables) {
+            final TestSubscriber<Integer> sub = new TestSubscriber<Integer>();
+            subscribers.add(sub);
+
+            o.subscribe(sub);
+        }
+
+        Thread.sleep(100);
+
+        AtomicInteger numErrors = new AtomicInteger(0);
+        AtomicInteger numValues = new AtomicInteger(0);
+
+        // only the first subscriber should receive the value.
+        // the others should get an error that the batch contains duplicates
+        for (TestSubscriber<Integer> sub: subscribers) {
+            sub.awaitTerminalEvent(1000, TimeUnit.MILLISECONDS);
+            if (sub.getOnCompletedEvents().isEmpty()) {
+                System.out.println(Thread.currentThread().getName() + " Error : " + sub.getOnErrorEvents());
+                sub.assertError(IllegalArgumentException.class);
+                sub.assertNoValues();
+                numErrors.getAndIncrement();
+
+            } else {
+                System.out.println(Thread.currentThread().getName() + " OnNext : " + sub.getOnNextEvents());
+                sub.assertValues(5);
+                sub.assertCompleted();
+                sub.assertNoErrors();
+                numValues.getAndIncrement();
+            }
+        }
+
+        assertEquals(1, numValues.get());
+        assertEquals(NUM - 1, numErrors.get());
+    }
+
+    protected void assertCommandExecutionEvents(HystrixInvokableInfo<?> command, HystrixEventType... expectedEventTypes) {
+        boolean emitExpected = false;
+        int expectedEmitCount = 0;
+
+        boolean fallbackEmitExpected = false;
+        int expectedFallbackEmitCount = 0;
+
+        List<HystrixEventType> condensedEmitExpectedEventTypes = new ArrayList<HystrixEventType>();
+
+        for (HystrixEventType expectedEventType: expectedEventTypes) {
+            if (expectedEventType.equals(HystrixEventType.EMIT)) {
+                if (!emitExpected) {
+                    //first EMIT encountered, add it to condensedEmitExpectedEventTypes
+                    condensedEmitExpectedEventTypes.add(HystrixEventType.EMIT);
+                }
+                emitExpected = true;
+                expectedEmitCount++;
+            } else if (expectedEventType.equals(HystrixEventType.FALLBACK_EMIT)) {
+                if (!fallbackEmitExpected) {
+                    //first FALLBACK_EMIT encountered, add it to condensedEmitExpectedEventTypes
+                    condensedEmitExpectedEventTypes.add(HystrixEventType.FALLBACK_EMIT);
+                }
+                fallbackEmitExpected = true;
+                expectedFallbackEmitCount++;
+            } else {
+                condensedEmitExpectedEventTypes.add(expectedEventType);
+            }
+        }
+        List<HystrixEventType> actualEventTypes = command.getExecutionEvents();
+        assertEquals(expectedEmitCount, command.getNumberEmissions());
+        assertEquals(expectedFallbackEmitCount, command.getNumberFallbackEmissions());
+        assertEquals(condensedEmitExpectedEventTypes, actualEventTypes);
+    }
+
     private static class TestRequestCollapser extends HystrixObservableCollapser<String, String, String, String> {
 
         private final String value;
@@ -780,7 +1670,7 @@ public class HystrixObservableCollapserTest {
         private final Collection<CollapsedRequest<String, String>> requests;
 
         TestCollapserCommand(Collection<CollapsedRequest<String, String>> requests) {
-            super(testPropsBuilder().setCommandPropertiesDefaults(HystrixCommandPropertiesTest.getUnitTestPropertiesSetter().withExecutionTimeoutInMilliseconds(50)));
+            super(testPropsBuilder().setCommandPropertiesDefaults(HystrixCommandPropertiesTest.getUnitTestPropertiesSetter().withExecutionTimeoutInMilliseconds(1000)));
             this.requests = requests;
         }
 
@@ -805,7 +1695,7 @@ public class HystrixObservableCollapserTest {
                         }
                         s.onNext(request.getArgument());
                     }
-                    
+
                     s.onCompleted();
                 }
 
@@ -958,6 +1848,27 @@ public class HystrixObservableCollapserTest {
                     }
                 });
             }
+        }
+    }
+
+    /**
+     * A Command implementation that supports caching.
+     */
+    private static class SuccessfulCacheableCollapsedCommand extends TestRequestCollapser {
+
+        private final boolean cacheEnabled;
+
+        public SuccessfulCacheableCollapsedCommand(TestCollapserTimer timer, String value, boolean cacheEnabled) {
+            super(timer, value);
+            this.cacheEnabled = cacheEnabled;
+        }
+
+        @Override
+        public String getCacheKey() {
+            if (cacheEnabled)
+                return "aCacheKey_" + super.value;
+            else
+                return null;
         }
     }
 }

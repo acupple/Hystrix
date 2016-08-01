@@ -61,15 +61,12 @@ public class HystrixRequestEvents {
         Map<ExecutionSignature, List<Integer>> commandDeduper = new HashMap<ExecutionSignature, List<Integer>>();
         for (HystrixInvokableInfo<?> execution: nonCachedExecutions) {
             int cachedCount = 0;
-            String cacheKey = null;
-            if (execution.getPublicCacheKey() != null) {
-                cacheKey = execution.getPublicCacheKey();
+            String cacheKey = execution.getPublicCacheKey();
+            if (cacheKey != null) {
                 CommandAndCacheKey key = new CommandAndCacheKey(execution.getCommandKey().name(), cacheKey);
                 cachedCount = cachingDetector.get(key);
             }
             ExecutionSignature signature;
-            HystrixCollapserKey collapserKey = execution.getOriginatingCollapserKey();
-            int collapserBatchCount = execution.getNumberCollapsed();
             if (cachedCount > 0) {
                 //this has a RESPONSE_FROM_CACHE and needs to get split off
                 signature = ExecutionSignature.from(execution, cacheKey, cachedCount);

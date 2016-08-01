@@ -25,6 +25,7 @@ import com.netflix.hystrix.config.HystrixCommandConfiguration;
 import com.netflix.hystrix.config.HystrixConfiguration;
 import com.netflix.hystrix.config.HystrixConfigurationStream;
 import com.netflix.hystrix.config.HystrixThreadPoolConfiguration;
+import com.netflix.hystrix.metric.HystrixRequestEventsStream;
 import rx.Observable;
 import rx.functions.Func1;
 
@@ -40,21 +41,25 @@ import java.util.Map;
  * <li> Consumer of your choice that wants control over where to embed this stream
  * </ul>
  *
+ * @deprecated Instead, prefer mapping your preferred serialization on top of {@link HystrixConfigurationStream#observe()}.
  */
+@Deprecated //since 1.5.4
 public class HystrixConfigurationJsonStream {
 
     private static final JsonFactory jsonFactory = new JsonFactory();
     private final Func1<Integer, Observable<HystrixConfiguration>> streamGenerator;
 
+    @Deprecated //since 1.5.4
     public HystrixConfigurationJsonStream() {
         this.streamGenerator = new Func1<Integer, Observable<HystrixConfiguration>>() {
             @Override
             public Observable<HystrixConfiguration> call(Integer delay) {
-                return new HystrixConfigurationStream(delay).observe();
+                return HystrixConfigurationStream.getInstance().observe();
             }
         };
     }
 
+    @Deprecated //since 1.5.4
     public HystrixConfigurationJsonStream(Func1<Integer, Observable<HystrixConfiguration>> streamGenerator) {
         this.streamGenerator = streamGenerator;
     }
@@ -171,10 +176,25 @@ public class HystrixConfigurationJsonStream {
         return jsonString.getBuffer().toString();
     }
 
+    /**
+     * @deprecated Not for public use.  Using the delay param prevents streams from being efficiently shared.
+     * Please use {@link HystrixConfigurationStream#observe()}
+     * @param delay interval between data emissions
+     * @return sampled utilization as Java object, taken on a timer
+     */
+    @Deprecated //deprecated in 1.5.4
     public Observable<HystrixConfiguration> observe(int delay) {
         return streamGenerator.call(delay);
     }
 
+    /**
+     * @deprecated Not for public use.  Using the delay param prevents streams from being efficiently shared.
+     * Please use {@link HystrixConfigurationStream#observe()}
+     * and you can map to JSON string via {@link HystrixConfigurationJsonStream#convertToString(HystrixConfiguration)}
+     * @param delay interval between data emissions
+     * @return sampled utilization as JSON string, taken on a timer
+     */
+    @Deprecated //deprecated in 1.5.4
     public Observable<String> observeJson(int delay) {
         return streamGenerator.call(delay).map(convertToJson);
     }

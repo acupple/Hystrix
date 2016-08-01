@@ -15,19 +15,24 @@
  */
 package com.netflix.hystrix.contrib.javanica.aop.aspectj;
 
+import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
-import com.netflix.hystrix.HystrixExecutable;
 import com.netflix.hystrix.HystrixInvokable;
+import com.netflix.hystrix.contrib.javanica.annotation.DefaultProperties;
 import com.netflix.hystrix.contrib.javanica.annotation.HystrixCollapser;
 import com.netflix.hystrix.contrib.javanica.annotation.HystrixCommand;
 import com.netflix.hystrix.contrib.javanica.command.CommandExecutor;
 import com.netflix.hystrix.contrib.javanica.command.ExecutionType;
 import com.netflix.hystrix.contrib.javanica.command.HystrixCommandFactory;
 import com.netflix.hystrix.contrib.javanica.command.MetaHolder;
+import com.netflix.hystrix.contrib.javanica.exception.CommandActionExecutionException;
+import com.netflix.hystrix.contrib.javanica.utils.AopUtils;
 import com.netflix.hystrix.contrib.javanica.utils.FallbackMethod;
 import com.netflix.hystrix.contrib.javanica.utils.MethodProvider;
 import com.netflix.hystrix.exception.HystrixBadRequestException;
+import com.netflix.hystrix.exception.HystrixRuntimeException;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -35,6 +40,8 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Pointcut;
 import org.aspectj.lang.reflect.MethodSignature;
+import rx.Observable;
+import rx.functions.Func1;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
@@ -85,13 +92,45 @@ public class HystrixCommandAspect {
         HystrixInvokable invokable = HystrixCommandFactory.getInstance().create(metaHolder);
         ExecutionType executionType = metaHolder.isCollapserAnnotationPresent() ?
                 metaHolder.getCollapserExecutionType() : metaHolder.getExecutionType();
+
         Object result;
         try {
-            result = CommandExecutor.execute(invokable, executionType, metaHolder);
+            if (!metaHolder.isObservable()) {
+                result = CommandExecutor.execute(invokable, executionType, metaHolder);
+            } else {
+                result = executeObservable(invokable, executionType, metaHolder);
+            }
         } catch (HystrixBadRequestException e) {
             throw e.getCause();
+        } catch (HystrixRuntimeException e) {
+            throw getCauseOrDefault(e, e);
         }
         return result;
+    }
+
+    private Observable executeObservable(HystrixInvokable invokable, ExecutionType executionType, MetaHolder metaHolder) {
+        return ((Observable) CommandExecutor.execute(invokable, executionType, metaHolder))
+                .onErrorResumeNext(new Func1<Throwable, Observable>() {
+                    @Override
+                    public Observable call(Throwable throwable) {
+                        if (throwable instanceof HystrixBadRequestException) {
+                            return Observable.error(throwable.getCause());
+                        } else if (throwable instanceof HystrixRuntimeException) {
+                            HystrixRuntimeException hystrixRuntimeException = (HystrixRuntimeException) throwable;
+                            return Observable.error(getCauseOrDefault(hystrixRuntimeException, hystrixRuntimeException));
+                        }
+                        return Observable.error(throwable);
+                    }
+                });
+    }
+
+    private Throwable getCauseOrDefault(RuntimeException e, RuntimeException defaultException) {
+        if (e.getCause() == null) return defaultException;
+        if (e.getCause() instanceof CommandActionExecutionException) {
+            CommandActionExecutionException commandActionExecutionException = (CommandActionExecutionException) e.getCause();
+            return Optional.fromNullable(commandActionExecutionException.getCause()).or(defaultException);
+        }
+        return e.getCause();
     }
 
     /**
@@ -111,19 +150,10 @@ public class HystrixCommandAspect {
         MetaHolder.Builder metaHolderBuilder(Object proxy, Method method, Object obj, Object[] args, final ProceedingJoinPoint joinPoint) {
             MetaHolder.Builder builder = MetaHolder.builder()
                     .args(args).method(method).obj(obj).proxyObj(proxy)
-                    .defaultGroupKey(obj.getClass().getSimpleName())
                     .joinPoint(joinPoint);
-            if (isCompileWeaving()) {
-                builder.ajcMethod(getAjcMethodFromTarget(joinPoint));
-            }
 
-            FallbackMethod fallbackMethod = MethodProvider.getInstance().getFallbackMethod(obj.getClass(), method);
-            if (fallbackMethod.isPresent()) {
-                fallbackMethod.validateReturnType(method);
-                builder
-                        .fallbackMethod(fallbackMethod.getMethod())
-                        .fallbackExecutionType(ExecutionType.getExecutionType(fallbackMethod.getMethod().getReturnType()));
-            }
+            setFallbackMethod(builder, obj.getClass(), method);
+            builder = setDefaultProperties(builder, obj.getClass(), joinPoint);
             return builder;
         }
     }
@@ -172,11 +202,9 @@ public class HystrixCommandAspect {
                 throw new IllegalStateException("batch method must be annotated with HystrixCommand annotation");
             }
             // method of batch hystrix command must be passed to metaholder because basically collapser doesn't have any actions
-            // that should be invoked upon intercepted method, its required only for underlying batch command
-            MetaHolder.Builder builder = MetaHolder.builder()
-                    .args(args).method(batchCommandMethod).obj(obj).proxyObj(proxy)
-                    .defaultGroupKey(obj.getClass().getSimpleName())
-                    .joinPoint(joinPoint);
+            // that should be invoked upon intercepted method, it's required only for underlying batch command
+
+            MetaHolder.Builder builder = metaHolderBuilder(proxy, batchCommandMethod, obj, args, joinPoint);
 
             if (isCompileWeaving()) {
                 builder.ajcMethod(getAjcMethodAroundAdvice(obj.getClass(), batchCommandMethod.getName(), List.class));
@@ -206,6 +234,9 @@ public class HystrixCommandAspect {
             HystrixCommand hystrixCommand = method.getAnnotation(HystrixCommand.class);
             ExecutionType executionType = ExecutionType.getExecutionType(method.getReturnType());
             MetaHolder.Builder builder = metaHolderBuilder(proxy, method, obj, args, joinPoint);
+            if (isCompileWeaving()) {
+                builder.ajcMethod(getAjcMethodFromTarget(joinPoint));
+            }
             return builder.defaultCommandKey(method.getName())
                             .hystrixCommand(hystrixCommand)
                             .observableExecutionMode(hystrixCommand.observableExecutionMode())
@@ -237,6 +268,33 @@ public class HystrixCommandAspect {
         } catch (ClassNotFoundException e) {
             throw Throwables.propagate(e);
         }
+    }
+
+    private static MetaHolder.Builder setDefaultProperties(MetaHolder.Builder builder, Class<?> declaringClass, final ProceedingJoinPoint joinPoint) {
+        Optional<DefaultProperties> defaultPropertiesOpt = AopUtils.getAnnotation(joinPoint, DefaultProperties.class);
+        builder.defaultGroupKey(declaringClass.getSimpleName());
+        if (defaultPropertiesOpt.isPresent()) {
+            DefaultProperties defaultProperties = defaultPropertiesOpt.get();
+            builder.defaultProperties(defaultProperties);
+            if (StringUtils.isNotBlank(defaultProperties.groupKey())) {
+                builder.defaultGroupKey(defaultProperties.groupKey());
+            }
+            if (StringUtils.isNotBlank(defaultProperties.threadPoolKey())) {
+                builder.defaultThreadPoolKey(defaultProperties.threadPoolKey());
+            }
+        }
+        return builder;
+    }
+
+    private static MetaHolder.Builder setFallbackMethod(MetaHolder.Builder builder, Class<?> declaringClass, Method commandMethod) {
+        FallbackMethod fallbackMethod = MethodProvider.getInstance().getFallbackMethod(declaringClass, commandMethod);
+        if (fallbackMethod.isPresent()) {
+            fallbackMethod.validateReturnType(commandMethod);
+            builder
+                    .fallbackMethod(fallbackMethod.getMethod())
+                    .fallbackExecutionType(ExecutionType.getExecutionType(fallbackMethod.getMethod().getReturnType()));
+        }
+        return builder;
     }
 
 }

@@ -91,7 +91,7 @@ public abstract class CommandStreamTest {
             Setter setter = Setter.withGroupKey(groupKey)
                     .andCommandKey(key)
                     .andCommandPropertiesDefaults(HystrixCommandProperties.Setter()
-                            .withExecutionTimeoutInMilliseconds(300)
+                            .withExecutionTimeoutInMilliseconds(600)
                             .withExecutionIsolationStrategy(isolationStrategy)
                             .withCircuitBreakerEnabled(true)
                             .withCircuitBreakerRequestVolumeThreshold(3)
@@ -117,7 +117,7 @@ public abstract class CommandStreamTest {
                     return new Command(setter, HystrixEventType.FAILURE, latency, uniqueArg, desiredFallbackEventType, fallbackLatency);
                 case TIMEOUT:
                     uniqueArg = uniqueId.incrementAndGet() + "";
-                    return new Command(setter, HystrixEventType.SUCCESS, 400, uniqueArg, desiredFallbackEventType, fallbackLatency);
+                    return new Command(setter, HystrixEventType.SUCCESS, 700, uniqueArg, desiredFallbackEventType, fallbackLatency);
                 case BAD_REQUEST:
                     uniqueArg = uniqueId.incrementAndGet() + "";
                     return new Command(setter, HystrixEventType.BAD_REQUEST, latency, uniqueArg, desiredFallbackEventType, 0);
@@ -140,12 +140,21 @@ public abstract class CommandStreamTest {
 
         @Override
         protected Integer run() throws Exception {
-            Thread.sleep(executionLatency);
-            switch (executionResult) {
-                case SUCCESS: return 1;
-                case FAILURE: throw new RuntimeException("induced failure");
-                case BAD_REQUEST: throw new HystrixBadRequestException("induced bad request");
-                default: throw new RuntimeException("unhandled HystrixEventType : " + executionResult);
+            try {
+                Thread.sleep(executionLatency);
+                switch (executionResult) {
+                    case SUCCESS:
+                        return 1;
+                    case FAILURE:
+                        throw new RuntimeException("induced failure");
+                    case BAD_REQUEST:
+                        throw new HystrixBadRequestException("induced bad request");
+                    default:
+                        throw new RuntimeException("unhandled HystrixEventType : " + executionResult);
+                }
+            } catch (InterruptedException ex) {
+                System.out.println("Received InterruptedException : " + ex);
+                throw ex;
             }
         }
 

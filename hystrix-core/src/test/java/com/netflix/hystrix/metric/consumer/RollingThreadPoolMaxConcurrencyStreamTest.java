@@ -90,7 +90,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         //no writes
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -108,14 +108,14 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         final CountDownLatch latch = new CountDownLatch(1);
         stream.observe().take(10).subscribe(getSubscriber(latch));
 
-        Command cmd1 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 10);
-        Command cmd2 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 14);
+        Command cmd1 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 50);
+        Command cmd2 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 40);
 
         cmd1.observe();
         Thread.sleep(1);
         cmd2.observe();
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         assertEquals(2, stream.getLatestRollingMax());
     }
 
@@ -137,7 +137,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         Thread.sleep(1);
         cmd2.observe();
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         //since commands run in semaphore isolation, they are not tracked by threadpool metrics
         assertEquals(0, stream.getLatestRollingMax());
     }
@@ -159,9 +159,9 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         final CountDownLatch latch = new CountDownLatch(1);
         stream.observe().take(10).subscribe(getSubscriber(latch));
 
-        Command cmd1 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 160);
-        Command cmd2 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 10);
-        Command cmd3 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 15);
+        Command cmd1 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 560);
+        Command cmd2 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 50);
+        Command cmd3 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 75);
 
         cmd1.observe();
         Thread.sleep(150); //bucket roll
@@ -169,7 +169,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         Thread.sleep(1);
         cmd3.observe();
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         assertEquals(3, stream.getLatestRollingMax());
     }
 
@@ -207,7 +207,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         Thread.sleep(100);
         cmd4.observe();
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         assertEquals(3, stream.getLatestRollingMax());
     }
 
@@ -248,7 +248,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         Thread.sleep(100);
         cmd4.observe();
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         assertEquals(2, stream.getLatestRollingMax());
     }
 
@@ -286,7 +286,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         Thread.sleep(100);
         cmd4.observe();
 
-        latch.await();
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         assertEquals(0, stream.getLatestRollingMax());
     }
 
@@ -312,7 +312,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
         cmd3.observe();
         cmd4.observe();
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
         assertTrue(cmd2.isResponseFromCache());
         assertTrue(cmd3.isResponseFromCache());
@@ -354,7 +354,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
             cmd.observe();
         }
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
         for (Command cmd: shortCircuited) {
             assertTrue(cmd.isResponseShortCircuited());
@@ -407,11 +407,11 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
             }));
         }
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
 
         for (Command rejectedCmd: rejected) {
-            assertTrue(rejectedCmd.isResponseSemaphoreRejected());
+            assertTrue(rejectedCmd.isResponseSemaphoreRejected() || rejectedCmd.isResponseShortCircuited());
         }
         //should be 0 since all are executed in a semaphore
         assertEquals(0, stream.getLatestRollingMax());
@@ -452,7 +452,7 @@ public class RollingThreadPoolMaxConcurrencyStreamTest extends CommandStreamTest
             rejectedCmd.observe();
         }
 
-        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         System.out.println("ReqLog : " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
         for (Command rejectedCmd: rejected) {
             assertTrue(rejectedCmd.isResponseThreadPoolRejected());

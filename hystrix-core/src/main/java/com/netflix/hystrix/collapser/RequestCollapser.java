@@ -25,7 +25,6 @@ import org.slf4j.LoggerFactory;
 
 import rx.Observable;
 
-import com.netflix.hystrix.HystrixCollapser;
 import com.netflix.hystrix.HystrixCollapserProperties;
 import com.netflix.hystrix.strategy.concurrency.HystrixConcurrencyStrategy;
 import com.netflix.hystrix.strategy.concurrency.HystrixContextCallable;
@@ -41,7 +40,8 @@ import com.netflix.hystrix.util.HystrixTimer.TimerListener;
  * @ThreadSafe
  */
 public class RequestCollapser<BatchReturnType, ResponseType, RequestArgumentType> {
-    static final Logger logger = LoggerFactory.getLogger(HystrixCollapser.class);
+    static final Logger logger = LoggerFactory.getLogger(RequestCollapser.class);
+    static final Object NULL_SENTINEL = new Object();
 
     private final HystrixCollapserBridge<BatchReturnType, ResponseType, RequestArgumentType> commandCollapser;
     // batch can be null once shutdown
@@ -74,7 +74,7 @@ public class RequestCollapser<BatchReturnType, ResponseType, RequestArgumentType
      * @throws IllegalStateException
      *             if submitting after shutdown
      */
-    public Observable<ResponseType> submitRequest(RequestArgumentType arg) {
+    public Observable<ResponseType> submitRequest(final RequestArgumentType arg) {
         /*
          * We only want the timer ticking if there are actually things to do so we register it the first time something is added.
          */
@@ -85,14 +85,20 @@ public class RequestCollapser<BatchReturnType, ResponseType, RequestArgumentType
 
         // loop until succeed (compare-and-set spin-loop)
         while (true) {
-            RequestBatch<BatchReturnType, ResponseType, RequestArgumentType> b = batch.get();
+            final RequestBatch<BatchReturnType, ResponseType, RequestArgumentType> b = batch.get();
             if (b == null) {
                 return Observable.error(new IllegalStateException("Submitting requests after collapser is shutdown"));
             }
-            Observable<ResponseType> f = b.offer(arg);
+
+            final Observable<ResponseType> response;
+            if (arg != null) {
+                response = b.offer(arg);
+            } else {
+                response = b.offer( (RequestArgumentType) NULL_SENTINEL);
+            }
             // it will always get an Observable unless we hit the max batch size
-            if (f != null) {
-                return f;
+            if (response != null) {
+                return response;
             } else {
                 // this batch can't accept requests so create a new one and set it if another thread doesn't beat us
                 createNewBatchAndExecutePreviousIfNeeded(b);
@@ -145,7 +151,7 @@ public class RequestCollapser<BatchReturnType, ResponseType, RequestArgumentType
                         RequestBatch<BatchReturnType, ResponseType, RequestArgumentType> currentBatch = batch.get();
                         // 1) it can be null if it got shutdown
                         // 2) we don't execute this batch if it has no requests and let it wait until next tick to be executed
-                        if (currentBatch != null && currentBatch.requests.size() > 0) {
+                        if (currentBatch != null && currentBatch.getSize() > 0) {
                             // do execution within context of wrapped Callable
                             createNewBatchAndExecutePreviousIfNeeded(currentBatch);
                         }

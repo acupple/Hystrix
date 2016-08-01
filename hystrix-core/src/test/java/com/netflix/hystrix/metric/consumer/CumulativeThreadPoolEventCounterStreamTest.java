@@ -86,7 +86,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         //no writes
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -111,7 +111,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -136,7 +136,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -161,7 +161,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -186,7 +186,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -215,7 +215,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd3.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -263,7 +263,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         shortCircuit2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -296,7 +296,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         List<Command> saturators = new ArrayList<Command>();
 
         for (int i = 0; i < 10; i++) {
-            saturators.add(CommandStreamTest.Command.from(groupKey, key, HystrixEventType.SUCCESS, 200, HystrixCommandProperties.ExecutionIsolationStrategy.SEMAPHORE));
+            saturators.add(CommandStreamTest.Command.from(groupKey, key, HystrixEventType.SUCCESS, 300, HystrixCommandProperties.ExecutionIsolationStrategy.SEMAPHORE));
         }
 
         CommandStreamTest.Command rejected1 = CommandStreamTest.Command.from(groupKey, key, HystrixEventType.SUCCESS, 0, HystrixCommandProperties.ExecutionIsolationStrategy.SEMAPHORE);
@@ -312,7 +312,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         }
 
         try {
-            Thread.sleep(100);
+            Thread.sleep(10);
         } catch (InterruptedException ie) {
             fail(ie.getMessage());
         }
@@ -321,7 +321,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         rejected2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -354,7 +354,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         List<CommandStreamTest.Command> saturators = new ArrayList<CommandStreamTest.Command>();
 
         for (int i = 0; i < 10; i++) {
-            saturators.add(CommandStreamTest.Command.from(groupKey, key, HystrixEventType.SUCCESS, 200));
+            saturators.add(CommandStreamTest.Command.from(groupKey, key, HystrixEventType.SUCCESS, 700));
         }
 
         CommandStreamTest.Command rejected1 = CommandStreamTest.Command.from(groupKey, key, HystrixEventType.SUCCESS, 0);
@@ -374,7 +374,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         rejected2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -405,7 +405,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -430,7 +430,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -475,7 +475,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         rejection2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -505,7 +505,7 @@ public class CumulativeThreadPoolEventCounterStreamTest extends CommandStreamTes
         cmd2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }

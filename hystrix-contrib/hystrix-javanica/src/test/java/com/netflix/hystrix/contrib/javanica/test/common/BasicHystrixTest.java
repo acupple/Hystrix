@@ -15,43 +15,45 @@
  */
 package com.netflix.hystrix.contrib.javanica.test.common;
 
-import com.netflix.hystrix.Hystrix;
+import com.google.common.base.Throwables;
+import com.hystrix.junit.HystrixRequestContextRule;
+import com.netflix.hystrix.HystrixInvokableInfo;
+import com.netflix.hystrix.HystrixThreadPool;
+import com.netflix.hystrix.HystrixThreadPoolProperties;
 import com.netflix.hystrix.strategy.concurrency.HystrixRequestContext;
-import org.junit.After;
-import org.junit.Before;
+import org.junit.Rule;
+
+import java.lang.reflect.Field;
 
 /**
  * Created by dmgcodevil
  */
 public abstract class BasicHystrixTest {
-
-    private HystrixRequestContext context;
+    @Rule
+    public HystrixRequestContextRule request = new HystrixRequestContextRule();
 
     protected final HystrixRequestContext getHystrixContext() {
-        return context;
+        return request.context();
     }
-
-    @Before
-    public void setUp() throws Exception {
-        context = createContext();
-    }
-
-    @After
-    public void tearDown() throws Exception {
-        context.shutdown();
-    }
-
-    private HystrixRequestContext createContext() {
-        HystrixRequestContext c = HystrixRequestContext.initializeContext();
-        Hystrix.reset();
-        return c;
-    }
-
 
     protected void resetContext() {
-        if (context != null) {
-            context.shutdown();
+        request.reset();
+    }
+
+    protected final HystrixThreadPoolProperties getThreadPoolProperties(HystrixInvokableInfo<?> command) {
+        try {
+            Field field = command.getClass().getSuperclass().getSuperclass().getSuperclass().getDeclaredField("threadPool");
+            field.setAccessible(true);
+            HystrixThreadPool threadPool = (HystrixThreadPool) field.get(command);
+
+            Field field2 = HystrixThreadPool.HystrixThreadPoolDefault.class.getDeclaredField("properties");
+            field2.setAccessible(true);
+            return (HystrixThreadPoolProperties) field2.get(threadPool);
+
+        } catch (NoSuchFieldException e) {
+            throw Throwables.propagate(e);
+        } catch (IllegalAccessException e) {
+            throw Throwables.propagate(e);
         }
-        context = createContext();
     }
 }

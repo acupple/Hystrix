@@ -187,7 +187,7 @@ public class HystrixServoMetricsPublisherCommand extends HystrixServoMetricsPubl
                     HystrixEventType eventType = eventThunk.call();
                     return metrics.getCumulativeCount(HystrixRollingNumberEvent.from(eventType));
                 } catch (NoSuchFieldError error) {
-                    logger.error("While publishing Servo metrics, error looking up eventType for : " + name + ".  Please check that all Hystrix versions are the same!");
+                    logger.error("While publishing Servo metrics, error looking up eventType for : {}.  Please check that all Hystrix versions are the same!", name);
                     return 0L;
                 }
             }
@@ -211,7 +211,7 @@ public class HystrixServoMetricsPublisherCommand extends HystrixServoMetricsPubl
                     HystrixEventType eventType = eventThunk.call();
                     return metrics.getRollingCount(HystrixRollingNumberEvent.from(eventType));
                 } catch (NoSuchFieldError error) {
-                    logger.error("While publishing Servo metrics, error looking up eventType for : " + name + ".  Please check that all Hystrix versions are the same!");
+                    logger.error("While publishing Servo metrics, error looking up eventType for : {}.  Please check that all Hystrix versions are the same!", name);
                     return 0L;
                 }
             }
@@ -515,7 +515,7 @@ public class HystrixServoMetricsPublisherCommand extends HystrixServoMetricsPubl
         monitors.add(getTotalLatencyPercentileMonitor("latencyTotal_percentile_75", 75));
         monitors.add(getTotalLatencyPercentileMonitor("latencyTotal_percentile_90", 90));
         monitors.add(getTotalLatencyPercentileMonitor("latencyTotal_percentile_99", 99));
-        monitors.add(getTotalLatencyPercentileMonitor("latencyTotal_percentile_995", 995));
+        monitors.add(getTotalLatencyPercentileMonitor("latencyTotal_percentile_995", 99.5));
 
         // group
         monitors.add(new InformationalMetric<String>(MonitorConfig.builder("commandGroup").build()) {

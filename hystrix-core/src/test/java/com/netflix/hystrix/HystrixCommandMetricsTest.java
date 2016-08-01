@@ -18,12 +18,25 @@ package com.netflix.hystrix;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
+import com.hystrix.junit.HystrixRequestContextRule;
 import com.netflix.hystrix.exception.HystrixBadRequestException;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import rx.Observable;
+import rx.Subscriber;
+import rx.observers.SafeSubscriber;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 
 public class HystrixCommandMetricsTest {
+
+    @Rule
+    public HystrixRequestContextRule ctx = new HystrixRequestContextRule();
 
     @Before
     public void init() {
@@ -128,26 +141,53 @@ public class HystrixCommandMetricsTest {
     }
 
     @Test
-    public void testCurrentConcurrentExecutionCount() {
+    public void testCurrentConcurrentExecutionCount() throws InterruptedException {
         String key = "cmd-metrics-C";
 
         HystrixCommandMetrics metrics = null;
+        List<Observable<Boolean>> cmdResults = new ArrayList<Observable<Boolean>>();
 
         int NUM_CMDS = 8;
         for (int i = 0; i < NUM_CMDS; i++) {
-            HystrixCommand<Boolean> cmd = new SuccessCommand(key, 400);
+            HystrixCommand<Boolean> cmd = new SuccessCommand(key, 900);
             if (metrics == null) {
                 metrics = cmd.metrics;
             }
-            cmd.queue();
+            Observable<Boolean> eagerObservable = cmd.observe();
+            cmdResults.add(eagerObservable);
         }
 
         try {
-            Thread.sleep(25);
+            Thread.sleep(150);
         } catch (InterruptedException ie) {
             fail(ie.getMessage());
         }
+        System.out.println("ReqLog: " + HystrixRequestLog.getCurrentRequest().getExecutedCommandsAsString());
         assertEquals(NUM_CMDS, metrics.getCurrentConcurrentExecutionCount());
+
+        final CountDownLatch latch = new CountDownLatch(1);
+        Observable.merge(cmdResults).subscribe(new Subscriber<Boolean>() {
+            @Override
+            public void onCompleted() {
+                System.out.println("All commands done");
+                latch.countDown();
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                System.out.println("Error duing command execution");
+                e.printStackTrace();
+                latch.countDown();
+            }
+
+            @Override
+            public void onNext(Boolean aBoolean) {
+
+            }
+        });
+
+        latch.await(10000, TimeUnit.MILLISECONDS);
+        assertEquals(0, metrics.getCurrentConcurrentExecutionCount());
     }
 
     private class Command extends HystrixCommand<Boolean> {
@@ -160,7 +200,7 @@ public class HystrixCommandMetricsTest {
             super(Setter.withGroupKey(HystrixCommandGroupKey.Factory.asKey("Command"))
                     .andCommandKey(HystrixCommandKey.Factory.asKey(commandKey))
                     .andCommandPropertiesDefaults(HystrixCommandPropertiesTest.getUnitTestPropertiesSetter()
-                            .withExecutionTimeoutInMilliseconds(100)
+                            .withExecutionTimeoutInMilliseconds(1000)
                             .withCircuitBreakerRequestVolumeThreshold(20)));
             this.shouldFail = shouldFail;
             this.shouldFailWithBadRequest = shouldFailWithBadRequest;

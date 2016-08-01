@@ -15,6 +15,8 @@
  */
 package com.netflix.hystrix.config;
 
+import com.netflix.config.DynamicIntProperty;
+import com.netflix.config.DynamicPropertyFactory;
 import com.netflix.hystrix.HystrixCollapserKey;
 import com.netflix.hystrix.HystrixCollapserMetrics;
 import com.netflix.hystrix.HystrixCollapserProperties;
@@ -26,12 +28,13 @@ import com.netflix.hystrix.HystrixThreadPoolKey;
 import com.netflix.hystrix.HystrixThreadPoolMetrics;
 import com.netflix.hystrix.HystrixThreadPoolProperties;
 import rx.Observable;
-import rx.functions.Func0;
+import rx.functions.Action0;
 import rx.functions.Func1;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * This class samples current Hystrix configuration and exposes that as a stream
@@ -39,36 +42,87 @@ import java.util.concurrent.TimeUnit;
 public class HystrixConfigurationStream {
 
     private final int intervalInMilliseconds;
-    private final Observable<Long> timer;
+    private final Observable<HystrixConfiguration> allConfigurationStream;
+    private final AtomicBoolean isSourceCurrentlySubscribed = new AtomicBoolean(false);
 
+    private static final DynamicIntProperty dataEmissionIntervalInMs =
+            DynamicPropertyFactory.getInstance().getIntProperty("hystrix.stream.config.intervalInMilliseconds", 5000);
+
+
+    private static final Func1<Long, HystrixConfiguration> getAllConfig =
+            new Func1<Long, HystrixConfiguration>() {
+                @Override
+                public HystrixConfiguration call(Long timestamp) {
+                    return HystrixConfiguration.from(
+                            getAllCommandConfig.call(timestamp),
+                            getAllThreadPoolConfig.call(timestamp),
+                            getAllCollapserConfig.call(timestamp)
+                    );
+                }
+            };
+
+    /**
+     * @deprecated Not for public use.  Please use {@link #getInstance()}.  This facilitates better stream-sharing
+     * @param intervalInMilliseconds milliseconds between data emissions
+     */
+    @Deprecated //deprecated in 1.5.4.
     public HystrixConfigurationStream(final int intervalInMilliseconds) {
         this.intervalInMilliseconds = intervalInMilliseconds;
-        this.timer = Observable.defer(new Func0<Observable<Long>>() {
-            @Override
-            public Observable<Long> call() {
-                return Observable.interval(intervalInMilliseconds, TimeUnit.MILLISECONDS);
-            }
-        });
+        this.allConfigurationStream = Observable.interval(intervalInMilliseconds, TimeUnit.MILLISECONDS)
+                .map(getAllConfig)
+                .doOnSubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        isSourceCurrentlySubscribed.set(true);
+                    }
+                })
+                .doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        isSourceCurrentlySubscribed.set(false);
+                    }
+                })
+                .share()
+                .onBackpressureDrop();
     }
 
+    //The data emission interval is looked up on startup only
+    private static final HystrixConfigurationStream INSTANCE =
+            new HystrixConfigurationStream(dataEmissionIntervalInMs.get());
+
+    public static HystrixConfigurationStream getInstance() {
+        return INSTANCE;
+    }
+
+    static HystrixConfigurationStream getNonSingletonInstanceOnlyUsedInUnitTests(int delayInMs) {
+        return new HystrixConfigurationStream(delayInMs);
+    }
+
+    /**
+     * Return a ref-counted stream that will only do work when at least one subscriber is present
+     */
     public Observable<HystrixConfiguration> observe() {
-        return timer.map(getAllConfig);
+        return allConfigurationStream;
     }
 
     public Observable<Map<HystrixCommandKey, HystrixCommandConfiguration>> observeCommandConfiguration() {
-        return timer.map(getAllCommandConfig);
+        return allConfigurationStream.map(getOnlyCommandConfig);
     }
 
     public Observable<Map<HystrixThreadPoolKey, HystrixThreadPoolConfiguration>> observeThreadPoolConfiguration() {
-        return timer.map(getAllThreadPoolConfig);
+        return allConfigurationStream.map(getOnlyThreadPoolConfig);
     }
 
     public Observable<Map<HystrixCollapserKey, HystrixCollapserConfiguration>> observeCollapserConfiguration() {
-        return timer.map(getAllCollapserConfig);
+        return allConfigurationStream.map(getOnlyCollapserConfig);
     }
 
     public int getIntervalInMilliseconds() {
         return this.intervalInMilliseconds;
+    }
+
+    public boolean isSourceCurrentlySubscribed() {
+        return isSourceCurrentlySubscribed.get();
     }
 
     private static HystrixCommandConfiguration sampleCommandConfiguration(HystrixCommandKey commandKey, HystrixThreadPoolKey threadPoolKey,
@@ -125,15 +179,29 @@ public class HystrixConfigurationStream {
                 }
             };
 
-    private static final Func1<Long, HystrixConfiguration> getAllConfig =
-            new Func1<Long, HystrixConfiguration>() {
+
+
+    private static final Func1<HystrixConfiguration, Map<HystrixCommandKey, HystrixCommandConfiguration>> getOnlyCommandConfig =
+            new Func1<HystrixConfiguration, Map<HystrixCommandKey, HystrixCommandConfiguration>>() {
                 @Override
-                public HystrixConfiguration call(Long timestamp) {
-                    return HystrixConfiguration.from(
-                            getAllCommandConfig.call(timestamp),
-                            getAllThreadPoolConfig.call(timestamp),
-                            getAllCollapserConfig.call(timestamp)
-                    );
+                public Map<HystrixCommandKey, HystrixCommandConfiguration> call(HystrixConfiguration hystrixConfiguration) {
+                    return hystrixConfiguration.getCommandConfig();
+                }
+            };
+
+    private static final Func1<HystrixConfiguration, Map<HystrixThreadPoolKey, HystrixThreadPoolConfiguration>> getOnlyThreadPoolConfig =
+            new Func1<HystrixConfiguration, Map<HystrixThreadPoolKey, HystrixThreadPoolConfiguration>>() {
+                @Override
+                public Map<HystrixThreadPoolKey, HystrixThreadPoolConfiguration> call(HystrixConfiguration hystrixConfiguration) {
+                    return hystrixConfiguration.getThreadPoolConfig();
+                }
+            };
+
+    private static final Func1<HystrixConfiguration, Map<HystrixCollapserKey, HystrixCollapserConfiguration>> getOnlyCollapserConfig =
+            new Func1<HystrixConfiguration, Map<HystrixCollapserKey, HystrixCollapserConfiguration>>() {
+                @Override
+                public Map<HystrixCollapserKey, HystrixCollapserConfiguration> call(HystrixConfiguration hystrixConfiguration) {
+                    return hystrixConfiguration.getCollapserConfig();
                 }
             };
 }

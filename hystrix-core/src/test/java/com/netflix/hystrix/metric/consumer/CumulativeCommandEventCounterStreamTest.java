@@ -28,6 +28,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import rx.Subscriber;
+import rx.Subscription;
+import rx.functions.Action0;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -76,16 +78,16 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testEmptyStreamProducesZeros() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-A");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         //no writes
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -96,18 +98,18 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testSingleSuccess() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-B");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         Command cmd = Command.from(groupKey, key, HystrixEventType.SUCCESS, 20);
 
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -120,18 +122,18 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testSingleFailure() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-C");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         Command cmd = Command.from(groupKey, key, HystrixEventType.FAILURE, 20);
 
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -145,18 +147,18 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testSingleTimeout() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-D");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         Command cmd = Command.from(groupKey, key, HystrixEventType.TIMEOUT);
 
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -170,18 +172,18 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testSingleBadRequest() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-E");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         Command cmd = Command.from(groupKey, key, HystrixEventType.BAD_REQUEST);
 
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -195,11 +197,11 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testRequestFromCache() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-F");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         Command cmd1 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 20);
         Command cmd2 = Command.from(groupKey, key, HystrixEventType.RESPONSE_FROM_CACHE);
@@ -210,7 +212,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         cmd3.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -226,11 +228,11 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testShortCircuited() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-G");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         //3 failures in a row will trip circuit.  let bucket roll once then submit 2 requests.
         //should see 3 FAILUREs and 2 SHORT_CIRCUITs and then 5 FALLBACK_SUCCESSes
@@ -247,7 +249,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         failure3.observe();
 
         try {
-            Thread.sleep(100);
+            Thread.sleep(500);
         } catch (InterruptedException ie) {
             fail(ie.getMessage());
         }
@@ -256,7 +258,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         shortCircuit2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -275,11 +277,11 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testSemaphoreRejected() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-H");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         //10 commands will saturate semaphore when called from different threads.
         //submit 2 more requests and they should be SEMAPHORE_REJECTED
@@ -288,7 +290,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         List<Command> saturators = new ArrayList<Command>();
 
         for (int i = 0; i < 10; i++) {
-            saturators.add(Command.from(groupKey, key, HystrixEventType.SUCCESS, 200, HystrixCommandProperties.ExecutionIsolationStrategy.SEMAPHORE));
+            saturators.add(Command.from(groupKey, key, HystrixEventType.SUCCESS, 500, HystrixCommandProperties.ExecutionIsolationStrategy.SEMAPHORE));
         }
 
         Command rejected1 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 0, HystrixCommandProperties.ExecutionIsolationStrategy.SEMAPHORE);
@@ -313,7 +315,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         rejected2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -332,11 +334,11 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testThreadPoolRejected() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-I");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         //10 commands will saturate threadpools when called concurrently.
         //submit 2 more requests and they should be THREADPOOL_REJECTED
@@ -345,7 +347,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         List<Command> saturators = new ArrayList<Command>();
 
         for (int i = 0; i < 10; i++) {
-            saturators.add(Command.from(groupKey, key, HystrixEventType.SUCCESS, 200));
+            saturators.add(Command.from(groupKey, key, HystrixEventType.SUCCESS, 500));
         }
 
         Command rejected1 = Command.from(groupKey, key, HystrixEventType.SUCCESS, 0);
@@ -365,7 +367,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         rejected2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -384,18 +386,18 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testFallbackFailure() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-J");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         Command cmd = Command.from(groupKey, key, HystrixEventType.FAILURE, 20, HystrixEventType.FALLBACK_FAILURE);
 
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -410,18 +412,18 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testFallbackMissing() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-K");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         Command cmd = Command.from(groupKey, key, HystrixEventType.FAILURE, 20, HystrixEventType.FALLBACK_MISSING);
 
         cmd.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -436,11 +438,11 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     @Test
     public void testFallbackRejection() {
         HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-L");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         //fallback semaphore size is 5.  So let 5 commands saturate that semaphore, then
         //let 2 more commands go to fallback.  they should get rejected by the fallback-semaphore
@@ -467,7 +469,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         rejection2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -481,20 +483,70 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
     }
 
     @Test
-    public void testCollapsed() {
-        HystrixCommandKey key = HystrixCommandKey.Factory.asKey("BatchCommand");
-        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
+    public void testCancelled() {
+        HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-M");
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
         stream.startCachingStreamValuesIfUnstarted();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        stream.observe().take(10).subscribe(getSubscriber(latch));
+        stream.observe().take(5).subscribe(getSubscriber(latch));
+
+        Command toCancel = Command.from(groupKey, key, HystrixEventType.SUCCESS, 500);
+
+        System.out.println(System.currentTimeMillis() + " : " + Thread.currentThread().getName() + " : about to observe and subscribe");
+        Subscription s = toCancel.observe().
+                doOnUnsubscribe(new Action0() {
+                    @Override
+                    public void call() {
+                        System.out.println(System.currentTimeMillis() + " : " + Thread.currentThread().getName() + " : UnSubscribe from command.observe()");
+                    }
+                }).
+                subscribe(new Subscriber<Integer>() {
+            @Override
+            public void onCompleted() {
+                System.out.println("Command OnCompleted");
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                System.out.println("Command OnError : " + e);
+            }
+
+            @Override
+            public void onNext(Integer i) {
+                System.out.println("Command OnNext : " + i);
+            }
+        });
+
+        System.out.println(System.currentTimeMillis() + " : " + Thread.currentThread().getName() + " : about to unsubscribe");
+        s.unsubscribe();
+
+        try {
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
+        } catch (InterruptedException ex) {
+            fail("Interrupted ex");
+        }
+        assertEquals(HystrixEventType.values().length, stream.getLatest().length);
+        long[] expected = new long[HystrixEventType.values().length];
+        expected[HystrixEventType.CANCELLED.ordinal()] = 1;
+        assertArrayEquals(expected, stream.getLatest());
+    }
+
+    @Test
+    public void testCollapsed() {
+        HystrixCommandKey key = HystrixCommandKey.Factory.asKey("BatchCommand");
+        stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 500);
+        stream.startCachingStreamValuesIfUnstarted();
+
+        final CountDownLatch latch = new CountDownLatch(1);
+        stream.observe().take(5).subscribe(getSubscriber(latch));
 
         for (int i = 0; i < 3; i++) {
             CommandStreamTest.Collapser.from(i).observe();
         }
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }
@@ -508,7 +560,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
 
     @Test
     public void testMultipleEventsOverTimeGetStoredAndNeverAgeOut() {
-        HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-M");
+        HystrixCommandKey key = HystrixCommandKey.Factory.asKey("CMD-CumulativeCounter-N");
         stream = CumulativeCommandEventCounterStream.getInstance(key, 10, 100);
         stream.startCachingStreamValuesIfUnstarted();
 
@@ -524,7 +576,7 @@ public class CumulativeCommandEventCounterStreamTest extends CommandStreamTest {
         cmd2.observe();
 
         try {
-            latch.await(10000, TimeUnit.MILLISECONDS);
+            assertTrue(latch.await(10000, TimeUnit.MILLISECONDS));
         } catch (InterruptedException ex) {
             fail("Interrupted ex");
         }

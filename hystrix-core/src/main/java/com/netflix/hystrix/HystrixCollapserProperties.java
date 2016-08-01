@@ -88,14 +88,6 @@ public abstract class HystrixCollapserProperties {
                 .build();
     }
 
-    @SuppressWarnings("unused")
-    private static HystrixProperty<String> getProperty(String propertyPrefix, HystrixCollapserKey key, String instanceProperty, String builderOverrideValue, String defaultValue) {
-        return forString()
-                .add(propertyPrefix + ".collapser." + key.name() + "." + instanceProperty, builderOverrideValue)
-                .add(propertyPrefix + ".collapser.default." + instanceProperty, defaultValue)
-                .build();
-    }
-
     /**
      * Whether request caching is enabled for {@link HystrixCollapser#execute} and {@link HystrixCollapser#queue} invocations.
      *
@@ -221,7 +213,7 @@ public abstract class HystrixCollapserProperties {
      * @NotThreadSafe
      */
     public static class Setter {
-        private Boolean collapsingEnabled = null;
+        @Deprecated private Boolean collapsingEnabled = null;
         private Integer maxRequestsInBatch = null;
         private Integer timerDelayInMilliseconds = null;
         private Boolean requestCacheEnabled = null;
@@ -235,6 +227,10 @@ public abstract class HystrixCollapserProperties {
         private Setter() {
         }
 
+        /**
+         * Deprecated because the collapsingEnabled setting doesn't do anything.
+         */
+        @Deprecated
         public Boolean getCollapsingEnabled() {
             return collapsingEnabled;
         }
@@ -275,7 +271,10 @@ public abstract class HystrixCollapserProperties {
             return metricsRollingPercentileWindowBuckets;
         }
 
-
+        /**
+         * Deprecated because the collapsingEnabled setting doesn't do anything.
+         */
+        @Deprecated
         public Setter withCollapsingEnabled(boolean value) {
             this.collapsingEnabled = value;
             return this;
